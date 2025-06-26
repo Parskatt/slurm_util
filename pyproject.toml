@@ -1,0 +1,17 @@
+[project]
+name = "slurm-util"
+version = "0.1.0"
+description = "Slurm utility functions"
+readme = "README.md"
+authors = [
+    { name = "Johan Edstedt", email = "johan.edstedt@liu.se" }
+]
+requires-python = ">=3.8"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+sshlurm = "slurm_util.sshlurm:main"

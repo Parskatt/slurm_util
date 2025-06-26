@@ -1,0 +1,368 @@
+import argparse
+import subprocess
+import sys
+import time
+import re
+import os
+from abc import ABC, abstractmethod
+
+class Cluster(ABC):
+    @abstractmethod
+    def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
+        pass
+
+    @abstractmethod
+    def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
+        pass
+
+def trim_whitespace(s):
+    return "\n".join([line.strip() for line in s.split("\n") if line.strip()])
+
+
+
+class Alvis(Cluster):
+    def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
+        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if gpus_per_node != "NOGPU" else "-C NOGPU"
+        cpu_alloc = f"--cpus-per-task {cpus_per_node*nodes}"
+        node_alloc = f"--nodes {nodes}"
+        return trim_whitespace(f"""
+            #SBATCH {gpu_alloc}
+            #SBATCH {cpu_alloc}
+            #SBATCH {node_alloc}
+                """)
+
+    def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
+        # alvis supports ssh by default
+        return ""
+
+class Berzelius(Cluster):
+    def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
+        if gpus_per_node == "NOGPU":
+            raise NotImplementedError("Berzelius handles NOGPU differently, TODO")
+        gpu_alloc = f"--gpus-per-node {gpus_per_node}"
+        cpu_alloc = f"--cpus-per-gpu {cpus_per_node // int(gpus_per_node)}"
+        node_alloc = f"--nodes {nodes}"
+        return trim_whitespace(f"""
+            #SBATCH {gpu_alloc}
+            #SBATCH {cpu_alloc}
+            #SBATCH {node_alloc}
+                """)
+    
+    def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
+        if no_ssh:
+            return ""
+        ssh_host_key_path = os.path.expanduser("~/.ssh/custom_sshd/ssh_host_key")
+        custom_sshd_dir = os.path.expanduser("~/.ssh/custom_sshd")
+        if not os.path.exists(ssh_host_key_path):
+            os.makedirs(custom_sshd_dir, exist_ok=True)
+            print("Setting up ssh server setup on berzelius...")
+            print("NOTE: make sure that your ssh key is in ~/.ssh/authorized_keys")
+            print(f"NOTE: Make sure to add {custom_ssh_port=} to your ~/.ssh/config")
+            os.popen(trim_whitespace(f"""cat > sshd_config << 'EOF'
+            Port {custom_ssh_port}
+            PidFile ~/.ssh/custom_sshd/sshd.pid
+            HostKey ~/.ssh/custom_sshd/ssh_host_key
+            AuthorizedKeysFile ~/.ssh/authorized_keys
+            PasswordAuthentication no
+            PubkeyAuthentication yes
+            ChallengeResponseAuthentication no
+            Subsystem sftp internal-sftp
+            EOF
+            ssh-keygen -t rsa -f ~/.ssh/custom_sshd/ssh_host_key -N ''
+            """))
+        return "/usr/sbin/sshd -f ~/.ssh/custom_sshd/sshd_config -D &"
+
+
+
+def format_in_box(text, line_width=76):
+    """Format text in a box with specified line width."""
+    box_width = line_width + 2  # +2 for the border characters
+    lines = []
+    lines.append("┌" + "─" * box_width + "┐")
+    
+    for line in text.strip().split('\n'):
+        if len(line) <= line_width:
+            lines.append(f"│ {line:<{line_width}} │")
+        else:
+            # Wrap long lines
+            while len(line) > line_width:
+                lines.append(f"│ {line[:line_width]:<{line_width}} │")
+                line = line[line_width:]
+            if line:  # Print remaining part if any
+                lines.append(f"│ {line:<{line_width}} │")
+    
+    lines.append("└" + "─" * box_width + "┘")
+    return '\n'.join(lines)
+
+
+def wrap_in_sbatch(
+    *,
+    command,
+    account,
+    venv_activate,
+    gpus_per_node,
+    cpus_per_node,
+    no_ssh,
+    nodes,
+    time_alloc,
+    num_tasks,
+    max_parallel,
+    custom_ssh_port,
+    shell_env,
+):
+    cluster = get_cluster()
+    stdout = r"#SBATCH -o slurm/%A.out"
+    ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = custom_ssh_port)
+    resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
+    shell_env_wrapped_command = f"{shell_env} {command}" if shell_env else command
+    sbatch_command = f"""#!/bin/bash
+#SBATCH -A {account}
+#SBATCH -t {time_alloc}
+{resource_alloc_str}
+{stdout}
+{ssh_setup_str}
+source {venv_activate}
+{shell_env_wrapped_command}
+"""
+    return sbatch_command
+
+
+def get_default_slurm_acc():
+    import os
+    with os.popen("sacctmgr show association where user=$USER format=Account --noheader --parsable | cut -d'|' -f1") as f:
+        return f.read().split("\n")[0]
+
+
+def get_venv_activate_path():
+    """Get the path to the current active venv or fallback to .venv from script directory."""
+    # First, check if we're in a virtual environment
+    if 'VIRTUAL_ENV' in os.environ:
+        venv_path = os.environ['VIRTUAL_ENV']
+        activate_path = os.path.join(venv_path, 'bin', 'activate')
+        if os.path.exists(activate_path):
+            return activate_path
+    
+    # Fallback to .venv in the directory where the script was called from
+    script_dir = os.getcwd()  # Current working directory where script was called
+    venv_dir = os.path.join(script_dir, '.venv')
+    if os.path.exists(venv_dir):
+        activate_path = os.path.join(venv_dir, 'bin', 'activate')
+        if os.path.exists(activate_path):
+            return activate_path
+    
+    # If no venv found, return empty string (will need manual setup)
+    return ""
+
+
+def get_cluster():
+    with os.popen("sacctmgr show association where user=$USER format=Cluster --noheader") as f:
+        clustr_str = trim_whitespace(f.read().split("\n")[0])
+    if clustr_str == "alvis":
+        return Alvis()
+    elif clustr_str == "berzelius":
+        return Berzelius()
+    else:
+        raise ValueError(f"Cluster {clustr_str} not supported")
+
+def get_job_nodes(job_id):
+    """Get the nodes allocated to a SLURM job."""
+    max_attempts = 30  # Wait up to 5 minutes for job to start
+    attempt = 0
+    
+    while attempt < max_attempts:
+        # Try to get node information from squeue
+        result = subprocess.run(
+            ["squeue", "-j", job_id, "--noheader", "--format=%N"],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode == 0 and result.stdout.strip():
+            nodes = result.stdout.strip()
+            if nodes and nodes != "(null)" and "(" not in nodes:  # Job has started
+                return nodes
+        
+        # If not found in squeue, try scontrol
+        result = subprocess.run(
+            ["scontrol", "show", "job", job_id],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode == 0:
+            # Look for NodeList in the output
+            for line in result.stdout.split('\n'):
+                if 'NodeList=' in line:
+                    node_match = re.search(r'NodeList=(\S+)', line)
+                    if node_match:
+                        nodes = node_match.group(1)
+                        if nodes and nodes != "(null)" and nodes != "N/A":
+                            return nodes
+        
+        time.sleep(10)
+        attempt += 1
+        print(f"Waiting for job {job_id} to be allocated nodes... (attempt {attempt}/{max_attempts})", flush=True)
+    
+    return None
+
+def print_ssh_info(job_id, nodes, no_ssh, custom_ssh_port):
+    """Print SSH connection information for the job."""
+    if no_ssh:
+        print(f"Job {job_id} submitted successfully!")
+        if nodes:
+            print(f"Allocated nodes: {nodes}")
+        return
+    
+    if nodes:
+        # extract first node if multiple
+        first_node = nodes.split(',')[0].split('[')[0]  # Handle node ranges
+        ssh_info = trim_whitespace(f"""
+                SSH Connection Information:
+                Job ID: {job_id}
+                Node(s): {nodes}
+
+                To connect via SSH, wait for the job to start, then run:
+                ssh -p {custom_ssh_port} $USER@{first_node}
+
+                You can check job status with: squeue -j {job_id}
+                """)
+        print(format_in_box(ssh_info.strip()))
+    else:
+        print(f"Job {job_id} submitted, but node information not yet available.")
+        print(f"Check job status with: squeue -j {job_id}")
+
+def wait_for_job(job_id):
+    """Wait for a SLURM job to complete."""
+    print(f"Waiting for job {job_id} to complete...", flush = True)
+    
+    while True:
+        # Check if job is still in queue
+        status_result = subprocess.run(
+            ["squeue", "-j", job_id, "--noheader", "--format=%T"],
+            capture_output=True, text=True
+        )
+        
+        if status_result.returncode != 0 or not status_result.stdout.strip():
+            # Job is no longer in queue, check final status
+            sacct_result = subprocess.run(
+                ["sacct", "-j", job_id, "--noheader", "--format=State"],
+                capture_output=True, text=True
+            )
+            
+            if "COMPLETED" in sacct_result.stdout:
+                print(f"Job {job_id} completed successfully", flush = True)
+                return True
+            elif "FAILED" in sacct_result.stdout or "CANCELLED" in sacct_result.stdout:
+                print(f"Job {job_id} failed or was cancelled", flush = True)
+                return False
+            else:
+                print(f"Job {job_id} finished", flush = True)
+                return True
+        
+        time.sleep(10)  # Wait 10 seconds before checking again
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run experiment using SLURM")
+    parser.add_argument("--no_ssh", required=False, action="store_true", help="Do not setup ssh server on berzelius")
+
+    parser.add_argument("--dryrun", help="Whether to submit the job or not", action="store_true")
+    parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
+    parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: NOGPU)", default="NOGPU")
+    parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
+    parser.add_argument("--custom_ssh_port", required=False, help="Port to use for custom ssh server on berzelius", default=2222)
+    parser.add_argument(
+        "--time",
+        "-t",
+        default="0-00:30:00",
+        help="Time allocation in SLURM format (default: 0-00:30:00)",
+    )
+    parser.add_argument(
+        "--shell_env",
+        default="",
+        help=f"shell env (default: empty)",
+    )
+    parser.add_argument(
+        "--venv",
+        "-v",
+        default=get_venv_activate_path(), 
+        help=f"venv activate script path (default: {get_venv_activate_path()})",
+    )
+    parser.add_argument(
+        "--cpus_per_node",
+        default=16,
+        help="number of cpu cores per node",
+    )
+    parser.add_argument("--num_tasks", "-n", default=1, type=int, help="number of tasks to run (default: 1)")
+    parser.add_argument(
+        "--max_parallel",
+        "-m",
+        default=4,
+        type=int,
+        help="max number of tasks to run in parallel (default: 4)",
+    )
+    parser.add_argument(
+        "--nodes",
+        "-N",
+        default=1,
+        type=int,
+        help="number of nodes to use (default: 1)",
+    )
+    parser.add_argument(
+        "command",
+        nargs='+',
+        help="The command to run, along with its arguments.",
+    )
+
+
+    args = parser.parse_args()
+    sbatch_command = wrap_in_sbatch(
+        command=" ".join(args.command),
+        account=args.account,
+        venv_activate=args.venv,
+        gpus_per_node=args.gpus_per_node,
+        cpus_per_node=args.cpus_per_node,
+        nodes=args.nodes,
+        no_ssh=args.no_ssh,
+        custom_ssh_port=args.custom_ssh_port,
+        time_alloc=args.time,
+        num_tasks=args.num_tasks,
+        max_parallel=args.max_parallel,
+        shell_env=args.shell_env,
+    )
+    
+    if not args.dryrun:
+        print("Running the following sbatch script:")
+        print(format_in_box(sbatch_command))
+        result = subprocess.run(["sbatch"], input=sbatch_command, text=True, capture_output=True)
+        
+        if result.returncode != 0:
+            print(f"Failed to submit job: {result.stderr}")
+            return 1
+            
+        # Extract job ID
+        job_id_match = re.search(r"Submitted batch job (\d+)", result.stdout)
+        if job_id_match:
+            job_id = job_id_match.group(1)
+        else:
+            print(f"Could not extract job ID from: {result.stdout}")
+            return 1
+        
+        print(result.stdout.strip())
+        
+        # Get node information and print SSH details
+        nodes = get_job_nodes(job_id)
+        print_ssh_info(job_id, nodes, args.no_ssh, args.custom_ssh_port)
+        
+        if args.blocking:
+            success = wait_for_job(job_id)
+            return 0 if success else 1
+        else:
+            return 0
+    else:
+        print("If dryrun was disabled, the following sbatch command would have been run:")
+        print(format_in_box(sbatch_command))
+        
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
