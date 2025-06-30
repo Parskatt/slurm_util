@@ -21,8 +21,10 @@ def trim_whitespace(s):
 
 
 class Alvis(Cluster):
+    """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
     def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
-        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if gpus_per_node != "NOGPU" else "-C NOGPU"
+        gpu, num = gpus_per_node.split(":")
+        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if gpu != "NOGPU" else "-C NOGPU"
         cpu_alloc = f"--cpus-per-task {cpus_per_node*nodes}"
         node_alloc = f"--nodes {nodes}"
         return trim_whitespace(f"""
@@ -36,17 +38,22 @@ class Alvis(Cluster):
         return ""
 
 class Berzelius(Cluster):
+    """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
     def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
-        if gpus_per_node == "NOGPU":
-            raise NotImplementedError("Berzelius handles NOGPU differently, TODO")
-        gpu_alloc = f"--gpus-per-node {gpus_per_node}"
-        cpu_alloc = f"--cpus-per-gpu {cpus_per_node // int(gpus_per_node)}"
-        node_alloc = f"--nodes {nodes}"
-        return trim_whitespace(f"""
-            #SBATCH {gpu_alloc}
-            #SBATCH {cpu_alloc}
-            #SBATCH {node_alloc}
+        gpu, num = gpus_per_node.split(":")
+        gpu_alloc = f"#SBATCH --gpus-per-node {num}" if gpu != "NOGPU" else "--partition=berzelius-cpu"
+        if "80GB" in gpu:
+            gpu_alloc += "\n#SBATCH -C fat"
+        elif "40GB" in gpu:
+            gpu_alloc += "\n#SBATCH -C thin"
+        cpu_alloc = f"#SBATCH --cpus-per-gpu {cpus_per_node // int(num)}" if gpu != "NOGPU" else ""
+        node_alloc = f"#SBATCH --nodes {nodes}"
+        alloc_str = trim_whitespace(f"""
+            {gpu_alloc}
+            {cpu_alloc}
+            {node_alloc}
                 """)
+        return alloc_str
     
     def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
         if no_ssh:
@@ -109,17 +116,22 @@ def wrap_in_sbatch(
     max_parallel,
     custom_ssh_port,
     shell_env,
+    interactive,
+    stdout,
 ):
     cluster = get_cluster()
-    stdout = r"#SBATCH -o slurm/%A.out"
+    os.makedirs(os.path.dirname(stdout), exist_ok=True)
+    stdout_str = f"#SBATCH -o {stdout}"
     ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = custom_ssh_port)
     resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
+    if interactive:
+        command = "sleep infinity"
     shell_env_wrapped_command = f"{shell_env} {command}" if shell_env else command
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
 {resource_alloc_str}
-{stdout}
+{stdout_str}
 {ssh_setup_str}
 source {venv_activate}
 {shell_env_wrapped_command}
@@ -261,57 +273,74 @@ def wait_for_job(job_id):
 
 
 def main():
+    default_stdout = os.path.expanduser("~/.cache/slurm/%A.out")
+    default_nodes = 1
+    default_max_parallel = 4
+    default_cpus_per_node = 16
+    default_venv = get_venv_activate_path()
+    default_time = "0-00:30:00"
     parser = argparse.ArgumentParser(description="Run experiment using SLURM")
     parser.add_argument("--no_ssh", required=False, action="store_true", help="Do not setup ssh server on berzelius")
 
     parser.add_argument("--dryrun", help="Whether to submit the job or not", action="store_true")
     parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
-    parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: NOGPU)", default="NOGPU")
+    parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: NOGPU:0)", default="NOGPU:0")
     parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
     parser.add_argument("--custom_ssh_port", required=False, help="Port to use for custom ssh server on berzelius", default=2222)
     parser.add_argument(
         "--time",
         "-t",
-        default="0-00:30:00",
-        help="Time allocation in SLURM format (default: 0-00:30:00)",
+        default=default_time,
+        help=f"Time allocation in SLURM format (default: {default_time})",
     )
     parser.add_argument(
         "--shell_env",
         default="",
-        help=f"shell env (default: empty)",
+        help=f"shell env (default: )",
     )
     parser.add_argument(
         "--venv",
         "-v",
-        default=get_venv_activate_path(), 
-        help=f"venv activate script path (default: {get_venv_activate_path()})",
+        default=default_venv, 
+        help=f"venv activate script path (default: {default_venv})",
     )
     parser.add_argument(
         "--cpus_per_node",
-        default=16,
-        help="number of cpu cores per node",
+        default=default_cpus_per_node,
+        help=f"number of cpu cores per node (default: {default_cpus_per_node})",
     )
     parser.add_argument("--num_tasks", "-n", default=1, type=int, help="number of tasks to run (default: 1)")
     parser.add_argument(
         "--max_parallel",
         "-m",
-        default=4,
+        default=default_max_parallel,
         type=int,
-        help="max number of tasks to run in parallel (default: 4)",
+        help=f"max number of tasks to run in parallel (default: {default_max_parallel})",
     )
     parser.add_argument(
         "--nodes",
         "-N",
-        default=1,
+        default=default_nodes,
         type=int,
-        help="number of nodes to use (default: 1)",
+        help=f"number of nodes to use (default: {default_nodes})",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Runs a basic sleep command instead of the provided command",
+    )
+    parser.add_argument(
+        "--stdout",
+        default=default_stdout,
+        required=False,
+        type=str,
+        help=f"Path to stdout file (default: {default_stdout})",
     )
     parser.add_argument(
         "command",
-        nargs='+',
+        nargs=argparse.REMAINDER,
         help="The command to run, along with its arguments.",
     )
-
 
     args = parser.parse_args()
     sbatch_command = wrap_in_sbatch(
@@ -327,6 +356,8 @@ def main():
         num_tasks=args.num_tasks,
         max_parallel=args.max_parallel,
         shell_env=args.shell_env,
+        interactive=args.interactive,
+        stdout=args.stdout,
     )
     
     if not args.dryrun:
