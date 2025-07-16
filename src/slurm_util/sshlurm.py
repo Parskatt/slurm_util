@@ -117,11 +117,12 @@ def wrap_in_sbatch(
     custom_ssh_port,
     shell_env,
     interactive,
-    stdout,
+    stdout_path,
 ):
     cluster = get_cluster()
-    os.makedirs(os.path.dirname(stdout), exist_ok=True)
-    stdout_str = f"#SBATCH -o {stdout}"
+    stdout_file = stdout_path + "/%A.out"
+    os.makedirs(stdout_path, exist_ok=True)
+    stdout_str = f"#SBATCH -o {stdout_file}"
     ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = custom_ssh_port)
     resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
     if interactive:
@@ -273,7 +274,7 @@ def wait_for_job(job_id):
 
 
 def main():
-    default_stdout = os.path.expanduser("~/.cache/slurm/%A.out")
+    default_stdout = os.path.expanduser("~/.cache/slurm")
     default_nodes = 1
     default_max_parallel = 4
     default_cpus_per_node = 16
