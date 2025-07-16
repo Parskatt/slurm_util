@@ -331,11 +331,11 @@ def main():
         help="Runs a basic sleep command instead of the provided command",
     )
     parser.add_argument(
-        "--stdout",
+        "--stdout_path",
         default=default_stdout,
         required=False,
         type=str,
-        help=f"Path to stdout file (default: {default_stdout})",
+        help=f"Path to stdout folder (default: {default_stdout})",
     )
     parser.add_argument(
         "command",
@@ -358,7 +358,7 @@ def main():
         max_parallel=args.max_parallel,
         shell_env=args.shell_env,
         interactive=args.interactive,
-        stdout=args.stdout,
+        stdout_path=args.stdout_path,
     )
     
     if not args.dryrun:
