@@ -46,6 +46,8 @@ class Berzelius(Cluster):
             gpu_alloc += "\n#SBATCH -C fat"
         elif "40GB" in gpu:
             gpu_alloc += "\n#SBATCH -C thin"
+        elif "1g.10gb" in gpu:
+            gpu_alloc += "\n#SBATCH --reservation=1g.10gb"
         cpu_alloc = f"#SBATCH --cpus-per-gpu {cpus_per_node // int(num)}" if gpu != "NOGPU" else ""
         node_alloc = f"#SBATCH --nodes {nodes}"
         alloc_str = trim_whitespace(f"""
@@ -209,8 +211,11 @@ def get_job_nodes(job_id):
                         nodes = node_match.group(1)
                         if nodes and nodes != "(null)" and nodes != "N/A":
                             return nodes
-        
-        time.sleep(10)
+        try:
+            time.sleep(10)
+        except KeyboardInterrupt:
+            print("Keyboard interrupt, exiting...", flush=True)
+            return None
         attempt += 1
         print(f"Waiting for job {job_id} to be allocated nodes... (attempt {attempt}/{max_attempts})", flush=True)
     
@@ -363,7 +368,7 @@ def main():
     
     if not args.dryrun:
         print("Running the following sbatch script:")
-        print(format_in_box(sbatch_command))
+        print(format_in_box(sbatch_command))        
         result = subprocess.run(["sbatch"], input=sbatch_command, text=True, capture_output=True)
         
         if result.returncode != 0:
