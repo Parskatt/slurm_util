@@ -108,7 +108,6 @@ def wrap_in_sbatch(
     *,
     command,
     account,
-    venv_activate,
     gpus_per_node,
     cpus_per_node,
     no_ssh,
@@ -127,8 +126,12 @@ def wrap_in_sbatch(
     stdout_str = f"#SBATCH -o {stdout_file}"
     ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = custom_ssh_port)
     resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
+    
     if interactive:
-        command = "sleep infinity"
+        command = "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
+    else:
+        command = f"script -qec \"tmux new-session -d -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {stdout_file}' && tmux wait $SLURM_JOB_ID\" /dev/null"
+    
     shell_env_wrapped_command = f"{shell_env} {command}" if shell_env else command
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
@@ -136,7 +139,6 @@ def wrap_in_sbatch(
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
-source {venv_activate}
 {shell_env_wrapped_command}
 """
     return sbatch_command
@@ -146,27 +148,6 @@ def get_default_slurm_acc():
     import os
     with os.popen("sacctmgr show association where user=$USER format=Account --noheader --parsable | cut -d'|' -f1") as f:
         return f.read().split("\n")[0]
-
-
-def get_venv_activate_path():
-    """Get the path to the current active venv or fallback to .venv from script directory."""
-    # First, check if we're in a virtual environment
-    if 'VIRTUAL_ENV' in os.environ:
-        venv_path = os.environ['VIRTUAL_ENV']
-        activate_path = os.path.join(venv_path, 'bin', 'activate')
-        if os.path.exists(activate_path):
-            return activate_path
-    
-    # Fallback to .venv in the directory where the script was called from
-    script_dir = os.getcwd()  # Current working directory where script was called
-    venv_dir = os.path.join(script_dir, '.venv')
-    if os.path.exists(venv_dir):
-        activate_path = os.path.join(venv_dir, 'bin', 'activate')
-        if os.path.exists(activate_path):
-            return activate_path
-    
-    # If no venv found, return empty string (will need manual setup)
-    return ""
 
 
 def get_cluster():
@@ -227,25 +208,36 @@ def print_ssh_info(job_id, nodes, no_ssh, custom_ssh_port):
         print(f"Job {job_id} submitted successfully!")
         if nodes:
             print(f"Allocated nodes: {nodes}")
+        print(f"Note: tmux session 'slurm_job_{job_id}' will be available once job starts")
         return
     
     if nodes:
         # extract first node if multiple
         first_node = nodes.split(',')[0].split('[')[0]  # Handle node ranges
+        
         ssh_info = trim_whitespace(f"""
-                SSH Connection Information:
-                Job ID: {job_id}
-                Node(s): {nodes}
+            SSH Connection Information with tmux:
+            Job ID: {job_id}
+            Node(s): {nodes}
+            tmux session: {job_id}
 
-                To connect via SSH, wait for the job to start, then run:
-                ssh -p {custom_ssh_port} $USER@{first_node}
+            To connect and monitor real-time output:
+            1. SSH to compute node: ssh -p {custom_ssh_port} $USER@{first_node}
+            2. Attach to tmux session: tmux attach-session -t {job_id}
+            
+            To detach from tmux (leave job running): Ctrl-b d
+            To list tmux sessions: tmux list-sessions
+            
+            You can check job status with: squeue -j {job_id}
+            """)
 
-                You can check job status with: squeue -j {job_id}
-                """)
+        
         print(format_in_box(ssh_info.strip()))
     else:
-        print(f"Job {job_id} submitted, but node information not yet available.")
-        print(f"Check job status with: squeue -j {job_id}")
+        job_info = f"Job {job_id} submitted, but node information not yet available."
+        status_info = f"Check job status with: squeue -j {job_id}"
+        tmux_info = f"tmux session 'slurm_job_{job_id}' will be available once job starts on a node"
+        print(f"{job_info}\n{status_info}\n{tmux_info}")
 
 def wait_for_job(job_id):
     """Wait for a SLURM job to complete."""
@@ -283,12 +275,10 @@ def main():
     default_nodes = 1
     default_max_parallel = 4
     default_cpus_per_node = 16
-    default_venv = get_venv_activate_path()
     default_time = "0-00:30:00"
     parser = argparse.ArgumentParser(description="Run experiment using SLURM")
     parser.add_argument("--no_ssh", required=False, action="store_true", help="Do not setup ssh server on berzelius")
-
-    parser.add_argument("--dryrun", help="Whether to submit the job or not", action="store_true")
+    parser.add_argument("--dry_run", help="Whether to submit the job or not", action="store_true")
     parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
     parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: NOGPU:0)", default="NOGPU:0")
     parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
@@ -302,13 +292,7 @@ def main():
     parser.add_argument(
         "--shell_env",
         default="",
-        help=f"shell env (default: )",
-    )
-    parser.add_argument(
-        "--venv",
-        "-v",
-        default=default_venv, 
-        help=f"venv activate script path (default: {default_venv})",
+        help="shell env (default: )",
     )
     parser.add_argument(
         "--cpus_per_node",
@@ -343,6 +327,11 @@ def main():
         help=f"Path to stdout folder (default: {default_stdout})",
     )
     parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Run command in a tmux session for real-time monitoring (requires SSH access to compute node)",
+    )
+    parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="The command to run, along with its arguments.",
@@ -352,7 +341,6 @@ def main():
     sbatch_command = wrap_in_sbatch(
         command=" ".join(args.command),
         account=args.account,
-        venv_activate=args.venv,
         gpus_per_node=args.gpus_per_node,
         cpus_per_node=args.cpus_per_node,
         nodes=args.nodes,
@@ -366,7 +354,7 @@ def main():
         stdout_path=args.stdout_path,
     )
     
-    if not args.dryrun:
+    if not args.dry_run:
         print("Running the following sbatch script:")
         print(format_in_box(sbatch_command))        
         result = subprocess.run(["sbatch"], input=sbatch_command, text=True, capture_output=True)
