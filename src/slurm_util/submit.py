@@ -18,8 +18,6 @@ class Cluster(ABC):
 def trim_whitespace(s):
     return "\n".join([line.strip() for line in s.split("\n") if line.strip()])
 
-
-
 class Alvis(Cluster):
     """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
     def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
@@ -60,26 +58,39 @@ class Berzelius(Cluster):
     def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
         if no_ssh:
             return ""
-        ssh_host_key_path = os.path.expanduser("~/.ssh/custom_sshd/ssh_host_key")
-        custom_sshd_dir = os.path.expanduser("~/.ssh/custom_sshd")
-        if not os.path.exists(ssh_host_key_path):
-            os.makedirs(custom_sshd_dir, exist_ok=True)
-            print("Setting up ssh server setup on berzelius...")
-            print("NOTE: make sure that your ssh key is in ~/.ssh/authorized_keys")
-            print(f"NOTE: Make sure to add {custom_ssh_port=} to your ~/.ssh/config")
-            os.popen(trim_whitespace(f"""cat > sshd_config << 'EOF'
-            Port {custom_ssh_port}
-            PidFile ~/.ssh/custom_sshd/sshd.pid
-            HostKey ~/.ssh/custom_sshd/ssh_host_key
-            AuthorizedKeysFile ~/.ssh/authorized_keys
-            PasswordAuthentication no
-            PubkeyAuthentication yes
-            ChallengeResponseAuthentication no
-            Subsystem sftp internal-sftp
-            EOF
-            ssh-keygen -t rsa -f ~/.ssh/custom_sshd/ssh_host_key -N ''
-            """))
-        return "/usr/sbin/sshd -f ~/.ssh/custom_sshd/sshd_config -D &"
+        
+        # Use job-specific directory and port calculation
+        return trim_whitespace("""
+            # Calculate unique SSH port based on job ID (base port 10000 + job_id % 55000)
+            SSH_PORT=$((10000 + $SLURM_JOB_ID % 55000))
+            JOB_SSH_DIR="/tmp/slurm_ssh_$SLURM_JOB_ID"
+            
+            # Create job-specific SSH directory
+            mkdir -p "$JOB_SSH_DIR"
+            
+            # Generate SSH host key if it doesn't exist
+            if [ ! -f "$JOB_SSH_DIR/ssh_host_key" ]; then
+                ssh-keygen -t rsa -f "$JOB_SSH_DIR/ssh_host_key" -N '' -q
+            fi
+            
+            # Create sshd_config for this job
+            cat > "$JOB_SSH_DIR/sshd_config" << EOF
+Port $SSH_PORT
+PidFile $JOB_SSH_DIR/sshd.pid
+HostKey $JOB_SSH_DIR/ssh_host_key
+AuthorizedKeysFile ~/.ssh/authorized_keys
+PasswordAuthentication no
+PubkeyAuthentication yes
+ChallengeResponseAuthentication no
+Subsystem sftp internal-sftp
+EOF
+            
+            # Start SSH daemon in background
+            /usr/sbin/sshd -f "$JOB_SSH_DIR/sshd_config" -D &
+            
+            # Store the SSH port for later use
+            echo "$SSH_PORT" > "$JOB_SSH_DIR/ssh_port"
+            """).strip()
 
 
 
@@ -115,7 +126,6 @@ def wrap_in_sbatch(
     time_alloc,
     num_tasks,
     max_parallel,
-    custom_ssh_port,
     shell_env,
     interactive,
     stdout_path,
@@ -124,7 +134,7 @@ def wrap_in_sbatch(
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
     stdout_str = f"#SBATCH -o {stdout_file}"
-    ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = custom_ssh_port)
+    ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = '$SLURM_JOB_ID')
     resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
     
     if interactive:
@@ -202,7 +212,7 @@ def get_job_nodes(job_id):
     
     return None
 
-def print_ssh_info(job_id, nodes, no_ssh, custom_ssh_port):
+def print_ssh_info(job_id, nodes, no_ssh):
     """Print SSH connection information for the job."""
     if no_ssh:
         print(f"Job {job_id} submitted successfully!")
@@ -215,20 +225,25 @@ def print_ssh_info(job_id, nodes, no_ssh, custom_ssh_port):
         # extract first node if multiple
         first_node = nodes.split(',')[0].split('[')[0]  # Handle node ranges
         
+        # Calculate SSH port using same formula as in ssh_setup
+        ssh_port = 10000 + (int(job_id) % 55000)
+        
         ssh_info = trim_whitespace(f"""
             SSH Connection Information with tmux:
             Job ID: {job_id}
             Node(s): {nodes}
+            SSH Port: {ssh_port}
             tmux session: {job_id}
 
             To connect and monitor real-time output:
-            1. SSH to compute node: ssh -p {custom_ssh_port} $USER@{first_node}
-            2. Attach to tmux session: tmux attach-session -t {job_id}
-            
+            ssh -t -p {ssh_port} $USER@{first_node} tmux attach-session -t {job_id}
+                        
             To detach from tmux (leave job running): Ctrl-b d
             To list tmux sessions: tmux list-sessions
             
             You can check job status with: squeue -j {job_id}
+            
+            Note: SSH daemon files are stored in /tmp/slurm_ssh_{job_id} on the compute node
             """)
 
         
@@ -282,7 +297,6 @@ def main():
     parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
     parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: NOGPU:0)", default="NOGPU:0")
     parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
-    parser.add_argument("--custom_ssh_port", required=False, help="Port to use for custom ssh server on berzelius", default=2222)
     parser.add_argument(
         "--time",
         "-t",
@@ -345,7 +359,6 @@ def main():
         cpus_per_node=args.cpus_per_node,
         nodes=args.nodes,
         no_ssh=args.no_ssh,
-        custom_ssh_port=args.custom_ssh_port,
         time_alloc=args.time,
         num_tasks=args.num_tasks,
         max_parallel=args.max_parallel,
@@ -375,7 +388,7 @@ def main():
         
         # Get node information and print SSH details
         nodes = get_job_nodes(job_id)
-        print_ssh_info(job_id, nodes, args.no_ssh, args.custom_ssh_port)
+        print_ssh_info(job_id, nodes, args.no_ssh)
         
         if args.blocking:
             success = wait_for_job(job_id)
