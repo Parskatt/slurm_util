@@ -35,6 +35,9 @@ class Alvis(Cluster):
         # alvis supports ssh by default
         return ""
 
+    def get_ssh_port(self, _):
+        return 22
+
 class Berzelius(Cluster):
     """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
     def resource_alloc(self, *, gpus_per_node, cpus_per_node, nodes) -> str:
@@ -92,7 +95,8 @@ EOF
             echo "$SSH_PORT" > "$JOB_SSH_DIR/ssh_port"
             """).strip()
 
-
+    def get_ssh_port(self, job_id):
+        return 10000 + (int(job_id) % 55000)
 
 def format_in_box(text, line_width=76):
     """Format text in a box with specified line width."""
@@ -129,27 +133,30 @@ def wrap_in_sbatch(
     shell_env,
     interactive,
     stdout_path,
+    cluster,
 ):
-    cluster = get_cluster()
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
     stdout_str = f"#SBATCH -o {stdout_file}"
     ssh_setup_str = cluster.ssh_setup(no_ssh = no_ssh, custom_ssh_port = '$SLURM_JOB_ID')
     resource_alloc_str = cluster.resource_alloc(gpus_per_node = gpus_per_node, cpus_per_node = cpus_per_node, nodes = nodes)
     
+    command = f"{shell_env} {command}" if shell_env else command
+    
     if interactive:
         command = "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
     else:
-        command = f"script -qec \"tmux new-session -d -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {stdout_file}' && tmux wait $SLURM_JOB_ID\" /dev/null"
+        # Use $SLURM_JOB_ID to create the actual output file path at runtime
+        actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
+        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
     
-    shell_env_wrapped_command = f"{shell_env} {command}" if shell_env else command
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
-{shell_env_wrapped_command}
+{command}
 """
     return sbatch_command
 
@@ -212,7 +219,7 @@ def get_job_nodes(job_id):
     
     return None
 
-def print_ssh_info(job_id, nodes, no_ssh):
+def print_ssh_info(job_id, nodes, no_ssh, cluster):
     """Print SSH connection information for the job."""
     if no_ssh:
         print(f"Job {job_id} submitted successfully!")
@@ -226,7 +233,7 @@ def print_ssh_info(job_id, nodes, no_ssh):
         first_node = nodes.split(',')[0].split('[')[0]  # Handle node ranges
         
         # Calculate SSH port using same formula as in ssh_setup
-        ssh_port = 10000 + (int(job_id) % 55000)
+        ssh_port = cluster.get_ssh_port(job_id)
         
         ssh_info = trim_whitespace(f"""
             SSH Connection Information with tmux:
@@ -352,6 +359,7 @@ def main():
     )
 
     args = parser.parse_args()
+    cluster = get_cluster()
     sbatch_command = wrap_in_sbatch(
         command=" ".join(args.command),
         account=args.account,
@@ -365,6 +373,7 @@ def main():
         shell_env=args.shell_env,
         interactive=args.interactive,
         stdout_path=args.stdout_path,
+        cluster=cluster,
     )
     
     if not args.dry_run:
@@ -388,7 +397,7 @@ def main():
         
         # Get node information and print SSH details
         nodes = get_job_nodes(job_id)
-        print_ssh_info(job_id, nodes, args.no_ssh)
+        print_ssh_info(job_id, nodes, args.no_ssh, cluster)
         
         if args.blocking:
             success = wait_for_job(job_id)
