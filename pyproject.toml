@@ -1,15 +1,13 @@
 [project]
 name = "slurm-util"
-version = "0.1.1"
+version = "0.1.2"
 description = "Slurm utility functions"
 readme = "README.md"
 authors = [
     { name = "Johan Edstedt", email = "johan.edstedt@liu.se" }
 ]
 requires-python = ">=3.8"
-dependencies = [
-    "tyro>=0.9.27",
-]
+dependencies = []
 
 [build-system]
 requires = ["hatchling"]

@@ -1,5 +1,4 @@
-from dataclasses import dataclass
-import tyro
+import argparse
 import subprocess
 import sys
 import time
@@ -290,119 +289,84 @@ def wait_for_job(job_id):
         
         time.sleep(10)  # Wait 10 seconds before checking again
 
-@dataclass
-class Config:
-    """Configuration for slurm job submission"""
-    no_ssh: bool = False
-    """Do not setup ssh server on berzelius"""
-    dry_run: bool = False
-    """Whether to submit the job or not"""
-    blocking: bool = False
-    """Whether to block until job completes before returning"""
-    g: int = 1
-    """Number of gpus per node"""
-    m: str = "A100"
-    """GPU model"""
-    a: str = get_default_slurm_acc()
-    """SLURM account number to use"""
-    time: str = "0-00:30:00"
-    """Time allocation in SLURM format"""
-    shell_env: str = ""
-    """Shell environment"""
-    cpus_per_node: int = 16
-    """Number of cpu cores per node"""
-    num_tasks: int = 1
-    """Number of tasks to run"""
-    nodes: int = 1
-    """Number of nodes to use"""
-    interactive: bool = False
-    """Whether to run in interactive mode"""
-    stdout_path: str = os.path.expanduser("~/.cache/slurm")
-    """Path to stdout folder"""
-    tmux: bool = False
-    """Whether to run in tmux session"""
-    command: str = ""
-    """Command to run"""
-
 def main():
-    config = tyro.cli(Config)
-    # default_stdout = os.path.expanduser("~/.cache/slurm")
-    # default_nodes = 1
-    # default_cpus_per_node = 16
-    # default_time = "0-00:30:00"
-    # parser = argparse.ArgumentParser(description="Run experiment using SLURM")
-    # parser.add_argument("--no_ssh", required=False, action="store_true", help="Do not setup ssh server on berzelius")
-    # parser.add_argument("--dry_run", help="Whether to submit the job or not", action="store_true")
-    # parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
-    # parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: 1)", default=1, type = int)
-    # parser.add_argument("--gpu_model", "-m", required=False, help="GPU model. (default: A100)", default="A100")
-    # parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
-    # parser.add_argument(
-    #     "--time",
-    #     "-t",
-    #     default=default_time,
-    #     help=f"Time allocation in SLURM format (default: {default_time})",
-    # )
-    # parser.add_argument(
-    #     "--shell_env",
-    #     default="",
-    #     help="shell env (default: )",
-    # )
-    # parser.add_argument(
-    #     "--cpus_per_node",
-    #     default=default_cpus_per_node,
-    #     help=f"number of cpu cores per node (default: {default_cpus_per_node})",
-    # )
-    # parser.add_argument("--num_tasks", "-n", default=1, type=int, help="number of tasks to run (default: 1)")
-    # parser.add_argument(
-    #     "--nodes",
-    #     "-N",
-    #     default=default_nodes,
-    #     type=int,
-    #     help=f"number of nodes to use (default: {default_nodes})",
-    # )
-    # parser.add_argument(
-    #     "--interactive",
-    #     action="store_true",
-    #     help="Runs a basic sleep command instead of the provided command",
-    # )
-    # parser.add_argument(
-    #     "--stdout_path",
-    #     default=default_stdout,
-    #     required=False,
-    #     type=str,
-    #     help=f"Path to stdout folder (default: {default_stdout})",
-    # )
-    # parser.add_argument(
-    #     "--tmux",
-    #     action="store_true",
-    #     help="Run command in a tmux session for real-time monitoring (requires SSH access to compute node)",
-    # )
-    # parser.add_argument(
-    #     "command",
-    #     nargs=argparse.REMAINDER,
-    #     help="The command to run, along with its arguments.",
-    # )
+    default_stdout = os.path.expanduser("~/.cache/slurm")
+    default_nodes = 1
+    default_cpus_per_node = 16
+    default_time = "0-00:30:00"
+    parser = argparse.ArgumentParser(description="Run experiment using SLURM")
+    parser.add_argument("--no_ssh", required=False, action="store_true", help="Do not setup ssh server on berzelius")
+    parser.add_argument("--dry_run", help="Whether to submit the job or not", action="store_true")
+    parser.add_argument("--blocking", help="Block until job completes before returning", action="store_true")
+    parser.add_argument("--gpus_per_node", "-g", required=False, help="Num gpus per node. (default: 1)", default=1, type = int)
+    parser.add_argument("--gpu_model", "-m", required=False, help="GPU model. (default: A100)", default="A100")
+    parser.add_argument("--account", "-a", required=False, help="SLURM account number to use", default=get_default_slurm_acc())
+    parser.add_argument(
+        "--time",
+        "-t",
+        default=default_time,
+        help=f"Time allocation in SLURM format (default: {default_time})",
+    )
+    parser.add_argument(
+        "--shell_env",
+        default="",
+        help="shell env (default: )",
+    )
+    parser.add_argument(
+        "--cpus_per_node",
+        default=default_cpus_per_node,
+        help=f"number of cpu cores per node (default: {default_cpus_per_node})",
+    )
+    parser.add_argument("--num_tasks", "-n", default=1, type=int, help="number of tasks to run (default: 1)")
+    parser.add_argument(
+        "--nodes",
+        "-N",
+        default=default_nodes,
+        type=int,
+        help=f"number of nodes to use (default: {default_nodes})",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Runs a basic sleep command instead of the provided command",
+    )
+    parser.add_argument(
+        "--stdout_path",
+        default=default_stdout,
+        required=False,
+        type=str,
+        help=f"Path to stdout folder (default: {default_stdout})",
+    )
+    parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Run command in a tmux session for real-time monitoring (requires SSH access to compute node)",
+    )
+    parser.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        help="The command to run, along with its arguments.",
+    )
 
-    # args = parser.parse_args()
+    args = parser.parse_args()
     cluster = get_cluster()
     sbatch_command = wrap_in_sbatch(
-        command=" ".join(config.command),
-        account=config.a,
-        gpus_per_node=config.g,
-        cpus_per_node=config.cpus_per_node,
-        nodes=config.nodes,
-        no_ssh=config.no_ssh,
-        time_alloc=config.time,
-        num_tasks=config.num_tasks,
-        shell_env=config.shell_env,
-        interactive=config.interactive,
-        stdout_path=config.stdout_path,
-        gpu_model=config.m,
+        command=" ".join(args.command),
+        account=args.account,
+        gpus_per_node=args.gpus_per_node,
+        cpus_per_node=args.cpus_per_node,
+        nodes=args.nodes,
+        no_ssh=args.no_ssh,
+        time_alloc=args.time,
+        num_tasks=args.num_tasks,
+        shell_env=args.shell_env,
+        interactive=args.interactive,
+        stdout_path=args.stdout_path,
+        gpu_model=args.gpu_model,
         cluster=cluster,
     )
     
-    if not config.dry_run:
+    if not args.dry_run:
         print("Running the following sbatch script:")
         print(format_in_box(sbatch_command))        
         result = subprocess.run(["sbatch"], input=sbatch_command, text=True, capture_output=True)
@@ -423,9 +387,9 @@ def main():
         
         # Get node information and print SSH details
         nodes = get_job_nodes(job_id)
-        print_ssh_info(job_id, nodes, config.no_ssh, cluster)
+        print_ssh_info(job_id, nodes, args.no_ssh, cluster)
         
-        if config.blocking:
+        if args.blocking:
             success = wait_for_job(job_id)
             return 0 if success else 1
         else:
