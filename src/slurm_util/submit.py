@@ -327,6 +327,7 @@ def main():
     )
     parser.add_argument(
         "--interactive",
+        "-i",
         action="store_true",
         help="Runs a basic sleep command instead of the provided command",
     )
