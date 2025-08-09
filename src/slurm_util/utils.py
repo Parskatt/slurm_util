@@ -3,6 +3,7 @@ import subprocess
 import time
 import re
 import os
+from typing import Literal
 
 def trim_whitespace(s):
     return "\n".join([line.strip() for line in s.split("\n") if line.strip()])
@@ -38,9 +39,11 @@ class Cluster(ABC):
 
 
 class Alvis(Cluster):
+    DeviceType = Literal["A100:40GB", "A100:80GB", "A40", "V100", "T4", "cpu"]
+    DefaultDeviceType: DeviceType = "A100:40GB"
     """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
-    def resource_alloc(self, *, gpus_per_node, gpu_model, cpus_per_node, nodes) -> str:
-        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if gpu_model != "NOGPU" else "-C NOGPU"
+    def resource_alloc(self, *, gpus_per_node, device_type, cpus_per_node, nodes) -> str:
+        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if device_type != "cpu" else "-C NOGPU"
         cpu_alloc = f"--cpus-per-task {cpus_per_node*nodes}"
         node_alloc = f"--nodes {nodes}"
         return trim_whitespace(f"""
@@ -57,16 +60,18 @@ class Alvis(Cluster):
         return 22
 
 class Berzelius(Cluster):
+    DeviceType = Literal["A100", "100:80GB", "100:40GB", "A100:10GB", "cpu"]
+    DefaultDeviceType: DeviceType = "A100"
     """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
-    def resource_alloc(self, *, gpus_per_node, gpu_model, cpus_per_node, nodes) -> str:
-        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if gpu_model != "NOGPU" else "--partition=berzelius-cpu"
-        if "80GB" in gpu_model:
+    def resource_alloc(self, *, gpus_per_node, device_type, cpus_per_node, nodes) -> str:
+        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "--partition=berzelius-cpu"    
+        if device_type == "100:80GB":
             gpu_alloc += "\n#SBATCH -C fat"
-        elif "40GB" in gpu_model:
+        elif device_type == "100:40GB":
             gpu_alloc += "\n#SBATCH -C thin"
-        elif "1g.10gb" in gpu_model:
+        elif device_type == "A100:10GB":
             gpu_alloc += "\n#SBATCH --reservation=1g.10gb"
-        cpu_alloc = f"#SBATCH --cpus-per-gpu {cpus_per_node // gpus_per_node}" if gpu_model != "NOGPU" else ""
+        cpu_alloc = f"#SBATCH --cpus-per-gpu {cpus_per_node // gpus_per_node}" if device_type != "cpu" else ""
         node_alloc = f"#SBATCH --nodes {nodes}"
         alloc_str = trim_whitespace(f"""
             {gpu_alloc}

@@ -16,7 +16,7 @@ def wrap_in_sbatch(
     command,
     account,
     gpus_per_node,
-    gpu_model,
+    device_type,
     cpus_per_node,
     no_ssh,
     nodes,
@@ -33,7 +33,7 @@ def wrap_in_sbatch(
     ssh_setup_str = cluster.ssh_setup(no_ssh=no_ssh, custom_ssh_port="$SLURM_JOB_ID")
     resource_alloc_str = cluster.resource_alloc(
         gpus_per_node=gpus_per_node,
-        gpu_model=gpu_model,
+        device_type=device_type,
         cpus_per_node=cpus_per_node,
         nodes=nodes,
     )
@@ -57,8 +57,12 @@ def wrap_in_sbatch(
 """
     return sbatch_command
 
+def validate_args(args):
+    if not args.command and not args.interactive:
+        raise ValueError("Command is required when not running interactively.")
 
 def main():
+    cluster = get_cluster()
     default_stdout = os.path.expanduser("~/.cache/slurm")
     default_nodes = 1
     default_cpus_per_node = 16
@@ -87,11 +91,12 @@ def main():
         type=int,
     )
     parser.add_argument(
-        "--gpu_model",
-        "-m",
+        "--device_type",
+        "-d",
         required=False,
-        help="GPU model. (default: A100)",
-        default="A100",
+        help=f"Device type. (default: {cluster.DefaultDeviceType})",
+        choices=cluster.DeviceType.__args__,
+        default=cluster.DefaultDeviceType,
     )
     parser.add_argument(
         "--account",
@@ -155,7 +160,6 @@ def main():
     )
 
     args = parser.parse_args()
-    cluster = get_cluster()
     sbatch_command = wrap_in_sbatch(
         command=" ".join(args.command),
         account=args.account,
@@ -168,7 +172,7 @@ def main():
         shell_env=args.shell_env,
         interactive=args.interactive,
         stdout_path=args.stdout_path,
-        gpu_model=args.gpu_model,
+        device_type=args.device_type,
         cluster=cluster,
     )
 
@@ -178,7 +182,7 @@ def main():
         result = subprocess.run(
             ["sbatch"], input=sbatch_command, text=True, capture_output=True
         )
-
+        print(result.stdout)
         if result.returncode != 0:
             print(f"Failed to submit job: {result.stderr}")
             return 1
