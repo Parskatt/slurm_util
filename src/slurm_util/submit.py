@@ -1,8 +1,8 @@
 import argparse
 import subprocess
 import sys
-import time
-import re
+# import time
+# import re
 import os
 from slurm_util.utils import (
     format_in_box,
@@ -17,7 +17,7 @@ def wrap_in_sbatch(
     account,
     gpus_per_node,
     device_type,
-    cpus_per_node,
+    cpus_per_gpu,
     no_ssh,
     nodes,
     time_alloc,
@@ -34,7 +34,7 @@ def wrap_in_sbatch(
     resource_alloc_str = cluster.resource_alloc(
         gpus_per_node=gpus_per_node,
         device_type=device_type,
-        cpus_per_node=cpus_per_node,
+        cpus_per_gpu=cpus_per_gpu,
         nodes=nodes,
     )
 
@@ -65,7 +65,7 @@ def main():
     cluster = get_cluster()
     default_stdout = os.path.expanduser("~/.cache/slurm")
     default_nodes = 1
-    default_cpus_per_node = 16
+    default_cpus_per_gpu = 16
     default_time = "0-00:30:00"
     parser = argparse.ArgumentParser(description="Run experiment using SLURM")
     parser.add_argument(
@@ -117,9 +117,9 @@ def main():
         help="shell env (default: )",
     )
     parser.add_argument(
-        "--cpus_per_node",
-        default=default_cpus_per_node,
-        help=f"number of cpu cores per node (default: {default_cpus_per_node})",
+        "--cpus_per_gpu",
+        default=default_cpus_per_gpu,
+        help=f"number of cpu cores per gpu (default: {default_cpus_per_gpu})",
     )
     parser.add_argument(
         "--num_tasks",
@@ -164,7 +164,7 @@ def main():
         command=" ".join(args.command),
         account=args.account,
         gpus_per_node=args.gpus_per_node,
-        cpus_per_node=args.cpus_per_node,
+        cpus_per_gpu=args.cpus_per_gpu,
         nodes=args.nodes,
         no_ssh=args.no_ssh,
         time_alloc=args.time,
