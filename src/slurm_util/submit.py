@@ -28,6 +28,7 @@ def wrap_in_sbatch(
     stdout_path: str,
     cluster: Cluster,
     no_uv: bool,
+    dist: bool,
 ):
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
@@ -40,6 +41,7 @@ def wrap_in_sbatch(
         nodes=nodes,
     )
 
+
     command = f"{shell_env} {command}" if shell_env else command
 
     if interactive:
@@ -51,13 +53,19 @@ def wrap_in_sbatch(
             command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'source env.sh && {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
         else:
             command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+    if dist:
+        command = f"srun --nodes=$SLURM_NNODES --ntasks-per-node=1 torchrun --nproc_per_node gpu --nnodes $SLURM_NNODES --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT --rdzv_id=$SLURM_JOB_ID {command}"
 
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
+#SBATCH --mail-type=ALL
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_NODELIST" | head -n 1)
+base=15000; range=20000
+export MASTER_PORT=$((base + (SLURM_JOB_ID % range)))
 export CLUSTER={cluster.name}
 {command}
 """
@@ -104,6 +112,14 @@ def main():
         choices=cluster.DeviceType.__args__,
         default=cluster.DefaultDeviceType,
     )
+
+    parser.add_argument(
+        "--dist",
+        required=False,
+        action="store_true",
+        help="Run distributed using torchrun",
+    )
+
     parser.add_argument(
         "--account",
         "-a",
@@ -173,6 +189,7 @@ def main():
         device_type=args.device_type,
         cluster=cluster,
         no_uv=args.no_uv,
+        dist=args.dist,
     )
 
     if not args.dry_run:
