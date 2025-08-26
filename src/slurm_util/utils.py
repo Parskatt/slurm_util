@@ -29,6 +29,7 @@ def format_in_box(text, line_width=76):
     return '\n'.join(lines)
 
 class Cluster(ABC):
+    name: str
     @abstractmethod
     def resource_alloc(self, *, gpus_per_node, cpus_per_gpu, nodes) -> str:
         pass
@@ -41,6 +42,7 @@ class Cluster(ABC):
 
 
 class Alvis(Cluster):
+    name = "alvis"
     DeviceType = Literal["A100:40GB", "A100:80GB", "A40", "V100", "T4", "cpu"]
     DefaultDeviceType: DeviceType = "A100:40GB"
     """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
@@ -71,6 +73,7 @@ class Alvis(Cluster):
         return 22
 
 class Berzelius(Cluster):
+    name = "berzelius"
     DeviceType = Literal["A100","A100:80GB", "100:40GB", "A100:10GB", "cpu"]
     DefaultDeviceType: DeviceType = "A100"
     """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""

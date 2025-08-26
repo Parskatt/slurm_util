@@ -1,4 +1,3 @@
-from slurm_util.utils import DeviceType
 import argparse
 import subprocess
 import sys
@@ -9,24 +8,26 @@ from slurm_util.utils import (
     format_in_box,
     get_default_slurm_acc,
     get_cluster,
+    DeviceType,
+    Cluster,
 )
 
 
 def wrap_in_sbatch(
     *,
-    command,
-    account,
-    gpus_per_node,
-    device_type,
-    cpus_per_gpu,
-    no_ssh,
-    nodes,
-    time_alloc,
-    shell_env,
-    interactive,
-    stdout_path,
-    cluster,
-    no_uv,
+    command: str,
+    account: str,
+    gpus_per_node: int,
+    device_type: DeviceType,
+    cpus_per_gpu: int,
+    no_ssh: bool,
+    nodes: int,
+    time_alloc: str,
+    shell_env: str,
+    interactive: bool,
+    stdout_path: str,
+    cluster: Cluster,
+    no_uv: bool,
 ):
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
@@ -47,13 +48,14 @@ def wrap_in_sbatch(
         # Use $SLURM_JOB_ID to create the actual output file path at runtime
         actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
         if no_uv:
-            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'source .env && {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'source env.sh && {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
         else:
             command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
 
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
+export CLUSTER={cluster.name}
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
@@ -141,7 +143,7 @@ def main():
     parser.add_argument(
         "--no-uv",
         action="store_true",
-        help="Do not use uv to run the command. Assumes .env file exists in root for sourcing correct project environment.",
+        help="Do not use uv to run the command. Assumes env.sh file exists in root for sourcing correct project environment.",
     )
     parser.add_argument(
         "--stdout_path",
