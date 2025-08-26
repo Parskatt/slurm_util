@@ -21,11 +21,11 @@ def wrap_in_sbatch(
     no_ssh,
     nodes,
     time_alloc,
-    num_tasks,
     shell_env,
     interactive,
     stdout_path,
     cluster,
+    no_uv,
 ):
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
@@ -45,7 +45,10 @@ def wrap_in_sbatch(
     else:
         # Use $SLURM_JOB_ID to create the actual output file path at runtime
         actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
-        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+        if no_uv:
+            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'source .env && {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+        else:
+            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
 
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
@@ -122,13 +125,6 @@ def main():
         help=f"number of cpu cores per gpu (default: {default_cpus_per_gpu})",
     )
     parser.add_argument(
-        "--num_tasks",
-        "-n",
-        default=1,
-        type=int,
-        help="number of tasks to run (default: 1)",
-    )
-    parser.add_argument(
         "--nodes",
         "-N",
         default=default_nodes,
@@ -142,16 +138,16 @@ def main():
         help="Runs a basic sleep command instead of the provided command",
     )
     parser.add_argument(
+        "--no-uv",
+        action="store_true",
+        help="Do not use uv to run the command. Assumes .env file exists in root for sourcing correct project environment.",
+    )
+    parser.add_argument(
         "--stdout_path",
         default=default_stdout,
         required=False,
         type=str,
         help=f"Path to stdout folder (default: {default_stdout})",
-    )
-    parser.add_argument(
-        "--tmux",
-        action="store_true",
-        help="Run command in a tmux session for real-time monitoring (requires SSH access to compute node)",
     )
     parser.add_argument(
         "command",
@@ -168,12 +164,12 @@ def main():
         nodes=args.nodes,
         no_ssh=args.no_ssh,
         time_alloc=args.time,
-        num_tasks=args.num_tasks,
         shell_env=args.shell_env,
         interactive=args.interactive,
         stdout_path=args.stdout_path,
         device_type=args.device_type,
         cluster=cluster,
+        no_uv=args.no_uv,
     )
 
     if not args.dry_run:
