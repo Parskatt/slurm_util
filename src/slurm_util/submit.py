@@ -55,10 +55,10 @@ def wrap_in_sbatch(
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
-export CLUSTER={cluster.name}
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
+export CLUSTER={cluster.name}
 {command}
 """
     return sbatch_command
