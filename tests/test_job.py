@@ -2,7 +2,7 @@ import time
 import sys
 
 
-T = 100
+T = 10
 print(f"Let's count to {T}...")
 sys.stdout.flush()  # Force output to be displayed immediately
 for t in range(T):

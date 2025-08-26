@@ -1,3 +1,4 @@
+from slurm_util.utils import DeviceType
 import argparse
 import subprocess
 import sys

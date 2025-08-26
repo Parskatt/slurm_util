@@ -3,7 +3,7 @@ import subprocess
 import time
 import re
 import os
-from typing import Literal
+from typing import Literal, Union
 
 def trim_whitespace(s):
     return "\n".join([line.strip() for line in s.split("\n") if line.strip()])
@@ -38,12 +38,23 @@ class Cluster(ABC):
         pass
 
 
+
+
 class Alvis(Cluster):
     DeviceType = Literal["A100:40GB", "A100:80GB", "A40", "V100", "T4", "cpu"]
     DefaultDeviceType: DeviceType = "A100:40GB"
     """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
-    def resource_alloc(self, *, gpus_per_node, device_type, cpus_per_gpu, nodes) -> str:
-        gpu_alloc = f"--gpus-per-node {gpus_per_node}" if device_type != "cpu" else "-C NOGPU"
+    _map_to_alvis_naming: dict[DeviceType, str] = {
+        "A100:40GB": "A100",
+        "A100:80GB": "A100fat",
+        "A40": "A40",
+        "V100": "V100",
+        "T4": "T4",
+        "cpu": "",
+    }
+    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
+        device_type_alvis = self._map_to_alvis_naming[device_type]
+        gpu_alloc = f"--gpus-per-node {device_type_alvis}:{gpus_per_node}" if device_type != "cpu" else "-C NOGPU"
         cpu_alloc = f"--cpus-per-task {cpus_per_gpu*nodes}"
         node_alloc = f"--nodes {nodes}"
         return trim_whitespace(f"""
@@ -60,10 +71,10 @@ class Alvis(Cluster):
         return 22
 
 class Berzelius(Cluster):
-    DeviceType = Literal["A100", "100:80GB", "100:40GB", "A100:10GB", "cpu"]
+    DeviceType = Literal["A100","A100:80GB", "100:40GB", "A100:10GB", "cpu"]
     DefaultDeviceType: DeviceType = "A100"
     """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
-    def resource_alloc(self, *, gpus_per_node, device_type, cpus_per_gpu, nodes) -> str:
+    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
         gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "--partition=berzelius-cpu"    
         if device_type == "100:80GB":
             gpu_alloc += "\n#SBATCH -C fat"
@@ -178,3 +189,6 @@ def get_job_nodes(job_id):
         print(f"Waiting for job {job_id} to be allocated nodes... (attempt {attempt}/{max_attempts})", flush=True)
     
     return None
+
+
+DeviceType = Union[Alvis.DeviceType, Berzelius.DeviceType]
