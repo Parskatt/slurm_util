@@ -12,7 +12,22 @@ from slurm_util.utils import (
     Cluster,
 )
 
-
+def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, dist: bool, stdout_path: str):
+    if interactive:
+        return "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
+    command = f"{shell_env} {command}" if shell_env else command
+    if dist:
+        command =  f"torchrun --nproc_per_node gpu --nnodes $SLURM_NNODES --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT --rdzv_id=$SLURM_JOB_ID {command}"
+    if no_uv:
+        command = f"source env.sh && {command}"
+    else:
+        command = f"uv run {command}"
+    # wrap in tmux session
+    actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
+    command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+    if dist:
+        command = f"srun --nodes=$SLURM_NNODES --ntasks-per-node=1 {command}"
+    return command
 def wrap_in_sbatch(
     *,
     command: str,
@@ -40,22 +55,7 @@ def wrap_in_sbatch(
         cpus_per_gpu=cpus_per_gpu,
         nodes=nodes,
     )
-
-
-    command = f"{shell_env} {command}" if shell_env else command
-
-    if interactive:
-        command = "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
-    else:
-        # Use $SLURM_JOB_ID to create the actual output file path at runtime
-        actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
-        if no_uv:
-            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'source env.sh && {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
-        else:
-            command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' 'uv run {command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
-    if dist:
-        command = f"srun --nodes=$SLURM_NNODES --ntasks-per-node=1 torchrun --nproc_per_node gpu --nnodes $SLURM_NNODES --rdzv_backend=c10d --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT --rdzv_id=$SLURM_JOB_ID {command}"
-
+    command = wrap_command(command, no_uv, interactive, shell_env, dist, stdout_path)
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
