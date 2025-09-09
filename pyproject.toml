@@ -20,4 +20,4 @@ test = [
 
 [project.scripts]
 submit = "slurm_util.submit:main"
-sshinfo = "slurm_util.info:main"
+attach = "slurm_util.attach:main"

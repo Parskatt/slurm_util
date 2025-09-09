@@ -200,3 +200,42 @@ def get_job_nodes(job_id):
 
 
 DeviceType = Union[Alvis.DeviceType, Berzelius.DeviceType]
+
+
+
+def print_ssh_info(job_id, cluster):
+    """Print SSH connection information for the job."""
+    nodes = get_job_nodes(job_id)
+    if nodes:
+        # extract first node if multiple
+        first_node = nodes.split(',')[0].split('[')[0]  # Handle node ranges
+        
+        # Calculate SSH port using same formula as in ssh_setup
+        ssh_port = cluster.get_ssh_port(job_id)
+        
+        ssh_info = trim_whitespace(f"""
+            SSH Connection Information with tmux:
+            Job ID: {job_id}
+            Node(s): {nodes}
+            SSH Port: {ssh_port}
+            tmux session: {job_id}
+
+            To connect and monitor real-time output:
+            ssh -t -p {ssh_port} $USER@{first_node} tmux attach-session -t {job_id}
+                        
+            To detach from tmux (leave job running): Ctrl-b d
+            To list tmux sessions: tmux list-sessions
+            
+            You can check job status with: squeue -j {job_id}
+            
+            Note: SSH daemon files are stored in /tmp/slurm_ssh_{job_id} on the compute node
+            """)
+
+        
+        print(format_in_box(ssh_info.strip()))
+    else:
+        job_info = f"Job {job_id} submitted, but node information not yet available."
+        status_info = f"Check job status with: squeue -j {job_id}"
+        tmux_info = f"tmux session 'slurm_job_{job_id}' will be available once job starts on a node"
+        print(f"{job_info}\n{status_info}\n{tmux_info}")
+

@@ -1,8 +1,7 @@
 import argparse
 import subprocess
 import sys
-# import time
-# import re
+import re
 import os
 from slurm_util.utils import (
     format_in_box,
@@ -11,6 +10,7 @@ from slurm_util.utils import (
     DeviceType,
     Cluster,
 )
+from slurm_util.attach import attach
 
 def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, dist: bool, stdout_path: str):
     if interactive:
@@ -70,6 +70,12 @@ export CLUSTER={cluster.name}
 {command}
 """
     return sbatch_command
+
+def _parse_job_id_from_stdout(stdout: str) -> str | None:
+    match = re.search(r"Submitted batch job (\d+)", stdout)
+    return match.group(1) if match else None
+
+    
 
 def validate_args(args):
     if not args.command and not args.interactive:
@@ -154,7 +160,12 @@ def main():
         "--interactive",
         "-i",
         action="store_true",
-        help="Runs a basic sleep command instead of the provided command",
+        help="Allocate nodes, start tmux on compute node, and open SSH remote in Cursor/VS Code",
+    )
+    parser.add_argument(
+        "--jump_host",
+        default=cluster.name,
+        help=f"SSH jump host alias or host to use (default: {cluster.name})",
     )
     parser.add_argument(
         "--no-uv",
@@ -202,6 +213,13 @@ def main():
         if result.returncode != 0:
             print(f"Failed to submit job: {result.stderr}")
             return 1
+        job_id = _parse_job_id_from_stdout(result.stdout)
+        if not job_id:
+            print("Could not parse job ID from sbatch output; skipping interactive attach.")
+            return 0
+        # Interactive workflow: wait for node assignment and open remote editor
+        if args.interactive:
+            attach(job_id, cluster)
     else:
         print(
             "If dry run was disabled, the following sbatch command would have been run:"
