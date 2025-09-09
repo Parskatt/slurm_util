@@ -11,3 +11,6 @@ wheels/
 
 # vscode
 .vscode
+
+# fuck uv.lock
+.gitignore
