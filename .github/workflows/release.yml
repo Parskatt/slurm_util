@@ -1,0 +1,44 @@
+name: Publish to PyPI
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - v*
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/slurm-util/
+    permissions:
+      id-token: write   # This is required for OIDC publishing to PyPI
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install build hatchling
+
+      - name: Build sdist and wheel
+        run: |
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+

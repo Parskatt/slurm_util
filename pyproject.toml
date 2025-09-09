@@ -13,6 +13,15 @@ dependencies = []
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/slurm_util"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/slurm_util",
+    "README.md",
+]
+
 [dependency-groups]
 test = [
     "pytest>=8.3.5",
