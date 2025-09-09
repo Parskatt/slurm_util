@@ -55,7 +55,7 @@ def attach(job_id, cluster):
         print("Neither 'cursor' nor 'code' CLI found in PATH. Please install one to open a remote session.")
         print(f"Manual SSH (via jump host): ssh -J {jump} -t -p {ssh_port} {user}@{first_host} tmux attach -t {job_id}")
         return 0
-    remote_authority = f"{user}@{cluster.name}-{first_host}-p{ssh_port}"
+    remote_authority = f"{user}@{cluster.name}-{first_host}-{ssh_port}"
     working_dir = os.getcwd()
     print(f"Opening {editor_cli} remote: ssh-remote+{remote_authority} in {working_dir}")
     _launch_remote_editor(editor_cli, remote_authority, working_dir)
