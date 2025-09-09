@@ -1,6 +1,6 @@
 [project]
 name = "slurm-util"
-version = "0.2.0"
+version = "0.2.1"
 description = "Slurm utility functions"
 readme = "README.md"
 authors = [
