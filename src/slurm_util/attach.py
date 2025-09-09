@@ -29,7 +29,9 @@ def _detect_editor_cli() -> str | None:
 
 def _launch_remote_editor(editor_cli: str, remote_authority: str, working_dir: str) -> None:
     # Try to reuse an existing window/session if possible
-    cmd = [editor_cli, "--remote", f"ssh-remote+{remote_authority}", working_dir]
+    # cmd = [editor_cli, "--remote", f"ssh-remote+{remote_authority}", working_dir]
+    cmd = [editor_cli, "--folder-uri", f"vscode-remote://ssh-remote+{remote_authority}/{working_dir}"]
+    
     # Run detached; don't block the CLI
     try:
         subprocess.Popen(cmd)
