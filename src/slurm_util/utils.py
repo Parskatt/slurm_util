@@ -76,20 +76,20 @@ class Alvis(Cluster):
 
 class Berzelius(Cluster):
     name = "berzelius"
-    DeviceType = Literal["A100","A100:80GB", "100:40GB", "A100:10GB", "cpu"]
+    DeviceType = Literal["A100","A100:80GB", "A100:40GB", "A100:10GB", "cpu"]
     DefaultDeviceType: DeviceType = "A100"
     """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
     def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
-        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "--partition=berzelius-cpu"    
-        if device_type == "100:80GB":
+        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "#SBATCH --partition=berzelius-cpu"    
+        if device_type == "A100:80GB":
             gpu_alloc += "\n#SBATCH -C fat"
-        elif device_type == "100:40GB":
+        elif device_type == "A100:40GB":
             gpu_alloc += "\n#SBATCH -C thin"
         elif device_type == "A100:10GB":
             gpu_alloc += "\n#SBATCH --reservation=1g.10gb"
         # Use one Slurm task per node when launching with torchrun under srun
         task_alloc = "#SBATCH --ntasks-per-node 1"
-        cpu_alloc = f"#SBATCH --cpus-per-task {cpus_per_gpu*gpus_per_node}" if device_type != "cpu" else ""
+        cpu_alloc = f"#SBATCH --cpus-per-task {cpus_per_gpu*gpus_per_node}"# if device_type != "cpu" else ""
         node_alloc = f"#SBATCH --nodes {nodes}"
         alloc_str = trim_whitespace(f"""
             {gpu_alloc}
