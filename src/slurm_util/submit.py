@@ -12,8 +12,9 @@ from slurm_util.utils import (
 )
 from slurm_util.attach import attach
 
-def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, dist: bool, stdout_path: str):
+def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, dist: bool, stdout_path: str, linger: bool):
     if interactive:
+        return "sleep infinity"
         return "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
     command = f"{shell_env} {command}" if shell_env else command
     if dist:
@@ -24,7 +25,11 @@ def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, d
         command = f"uv run {command}"
     # wrap in tmux session
     actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
-    command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
+    if linger:
+        # Keep the tmux session alive after the command exits (success or failure)
+        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}; echo \"Command exited; keeping session alive. Press Ctrl-b d to detach.\"; exec bash -l'\" /dev/null"
+    else:
+        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
     if dist:
         command = f"srun --nodes=$SLURM_NNODES --ntasks-per-node=1 {command}"
     return command
@@ -44,6 +49,7 @@ def wrap_in_sbatch(
     cluster: Cluster,
     no_uv: bool,
     dist: bool,
+    linger: bool,
 ):
     stdout_file = stdout_path + "/%A.out"
     os.makedirs(stdout_path, exist_ok=True)
@@ -55,7 +61,7 @@ def wrap_in_sbatch(
         cpus_per_gpu=cpus_per_gpu,
         nodes=nodes,
     )
-    command = wrap_command(command, no_uv, interactive, shell_env, dist, stdout_path)
+    command = wrap_command(command, no_uv, interactive, shell_env, dist, stdout_path, linger)
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
@@ -163,6 +169,11 @@ def main():
         help="Allocate nodes, start tmux on compute node, and open SSH remote in Cursor/VS Code",
     )
     parser.add_argument(
+        "--no-linger",
+        action="store_true",
+        help="Do not keep tmux session alive after command exits/fails (non-interactive only)",
+    )
+    parser.add_argument(
         "--jump_host",
         default=cluster.name,
         help=f"SSH jump host alias or host to use (default: {cluster.name})",
@@ -201,6 +212,7 @@ def main():
         cluster=cluster,
         no_uv=args.no_uv,
         dist=args.dist,
+        linger=not args.no_linger,
     )
 
     if not args.dry_run:
