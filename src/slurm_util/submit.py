@@ -27,7 +27,7 @@ def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, d
     actual_stdout_file = f"{stdout_path}/$SLURM_JOB_ID.out"
     if linger:
         # Keep the tmux session alive after the command exits (success or failure)
-        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}; echo \"Command exited; keeping session alive. Press Ctrl-b d to detach.\"; exec bash -l'\" /dev/null"
+        command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}; echo Command exited - keeping session alive. Press Ctrl-b d to detach.; exec bash -l'\" /dev/null"
     else:
         command = f"script -qec \"tmux new-session -s '$SLURM_JOB_ID' '{command} 2>&1 | tee {actual_stdout_file}'\" /dev/null"
     if dist:
