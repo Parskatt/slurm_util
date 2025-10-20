@@ -14,7 +14,7 @@ from slurm_util.attach import attach
 
 def wrap_command(command: str, no_uv: bool, interactive: bool, shell_env: str, dist: bool, stdout_path: str, linger: bool):
     if interactive:
-        return "sleep infinity"
+        # return "sleep infinity"
         return "script -qec \"tmux new-session -s '$SLURM_JOB_ID'\" /dev/null"
     command = f"{shell_env} {command}" if shell_env else command
     if dist:
@@ -62,10 +62,12 @@ def wrap_in_sbatch(
         nodes=nodes,
     )
     command = wrap_command(command, no_uv, interactive, shell_env, dist, stdout_path, linger)
+    jobname_str = "#SBATCH -J interactive" if interactive else ""
     sbatch_command = f"""#!/bin/bash
 #SBATCH -A {account}
 #SBATCH -t {time_alloc}
 #SBATCH --mail-type=ALL
+{jobname_str}
 {resource_alloc_str}
 {stdout_str}
 {ssh_setup_str}
