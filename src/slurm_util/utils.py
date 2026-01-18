@@ -34,71 +34,6 @@ class Cluster(ABC):
     def resource_alloc(self, *, gpus_per_node, cpus_per_gpu, nodes) -> str:
         pass
 
-    @abstractmethod
-    def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
-        pass
-
-
-
-
-class Alvis(Cluster):
-    name = "alvis"
-    DeviceType = Literal["A100:40GB", "A100:80GB", "A40", "V100", "T4", "cpu"]
-    DefaultDeviceType: DeviceType = "A100:40GB"
-    """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
-    _map_to_alvis_naming: dict[DeviceType, str] = {
-        "A100:40GB": "A100",
-        "A100:80GB": "A100fat",
-        "A40": "A40",
-        "V100": "V100",
-        "T4": "T4",
-        "cpu": "",
-    }
-    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
-        device_type_alvis = self._map_to_alvis_naming[device_type]
-        gpu_alloc = f"--gpus-per-node {device_type_alvis}:{gpus_per_node}" if device_type != "cpu" else "-C NOGPU"
-        cpu_alloc = f"--cpus-per-task {cpus_per_gpu*gpus_per_node}"  # one task per node, CPUs = GPUs * CPUs per GPU
-        task_alloc = "--ntasks-per-node 1"
-        node_alloc = f"--nodes {nodes}"
-        return trim_whitespace(f"""
-            #SBATCH {gpu_alloc}
-            #SBATCH {cpu_alloc}
-            #SBATCH {task_alloc}
-            #SBATCH {node_alloc}
-                """)
-
-    def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
-        # alvis supports ssh by default
-        return ""
-
-    def get_ssh_port(self, _):
-        return 22
-
-class Berzelius(Cluster):
-    name = "berzelius"
-    DeviceType = Literal["A100","A100:80GB", "A100:40GB", "A100:10GB", "cpu"]
-    DefaultDeviceType: DeviceType = "A100"
-    """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
-    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
-        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "#SBATCH --partition=berzelius-cpu"    
-        if device_type == "A100:80GB":
-            gpu_alloc += "\n#SBATCH -C fat"
-        elif device_type == "A100:40GB":
-            gpu_alloc += "\n#SBATCH -C thin"
-        elif device_type == "A100:10GB":
-            gpu_alloc += "\n#SBATCH --reservation=1g.10gb"
-        # Use one Slurm task per node when launching with torchrun under srun
-        task_alloc = "#SBATCH --ntasks-per-node 1"
-        cpu_alloc = f"#SBATCH --cpus-per-task {cpus_per_gpu*gpus_per_node}"# if device_type != "cpu" else ""
-        node_alloc = f"#SBATCH --nodes {nodes}"
-        alloc_str = trim_whitespace(f"""
-            {gpu_alloc}
-            {task_alloc}
-            {cpu_alloc}
-            {node_alloc}
-                """)
-        return alloc_str
-    
     def ssh_setup(self, *, no_ssh, custom_ssh_port) -> str:
         if no_ssh:
             return ""
@@ -138,6 +73,61 @@ EOF
 
     def get_ssh_port(self, job_id):
         return 10000 + (int(job_id) % 55000)
+
+
+
+
+class Alvis(Cluster):
+    name = "alvis"
+    DeviceType = Literal["A100:40GB", "A100:80GB", "A40", "V100", "T4", "cpu"]
+    DefaultDeviceType: DeviceType = "A100:40GB"
+    """https://www.nsc.liu.se/support/systems/alvis/#21-resource-allocation-guidelines"""
+    _map_to_alvis_naming: dict[DeviceType, str] = {
+        "A100:40GB": "A100",
+        "A100:80GB": "A100fat",
+        "A40": "A40",
+        "V100": "V100",
+        "T4": "T4",
+        "cpu": "",
+    }
+    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
+        device_type_alvis = self._map_to_alvis_naming[device_type]
+        gpu_alloc = f"--gpus-per-node {device_type_alvis}:{gpus_per_node}" if device_type != "cpu" else "-C NOGPU"
+        cpu_alloc = f"--cpus-per-task {cpus_per_gpu*gpus_per_node}"  # one task per node, CPUs = GPUs * CPUs per GPU
+        task_alloc = "--ntasks-per-node 1"
+        node_alloc = f"--nodes {nodes}"
+        return trim_whitespace(f"""
+            #SBATCH {gpu_alloc}
+            #SBATCH {cpu_alloc}
+            #SBATCH {task_alloc}
+            #SBATCH {node_alloc}
+                """)
+
+
+class Berzelius(Cluster):
+    name = "berzelius"
+    DeviceType = Literal["A100","A100:80GB", "A100:40GB", "A100:10GB", "cpu"]
+    DefaultDeviceType: DeviceType = "A100"
+    """https://www.nsc.liu.se/support/systems/berzelius-gpu/#21-resource-allocation-guidelines"""
+    def resource_alloc(self, *, gpus_per_node: int, device_type: DeviceType, cpus_per_gpu: int, nodes: int) -> str:
+        gpu_alloc = f"#SBATCH --gpus-per-node {gpus_per_node}" if device_type != "cpu" else "#SBATCH --partition=berzelius-cpu"    
+        if device_type == "A100:80GB":
+            gpu_alloc += "\n#SBATCH -C fat"
+        elif device_type == "A100:40GB":
+            gpu_alloc += "\n#SBATCH -C thin"
+        elif device_type == "A100:10GB":
+            gpu_alloc += "\n#SBATCH --reservation=1g.10gb"
+        # Use one Slurm task per node when launching with torchrun under srun
+        task_alloc = "#SBATCH --ntasks-per-node 1"
+        cpu_alloc = f"#SBATCH --cpus-per-task {cpus_per_gpu*gpus_per_node}"# if device_type != "cpu" else ""
+        node_alloc = f"#SBATCH --nodes {nodes}"
+        alloc_str = trim_whitespace(f"""
+            {gpu_alloc}
+            {task_alloc}
+            {cpu_alloc}
+            {node_alloc}
+                """)
+        return alloc_str
 
 
 def get_default_slurm_acc():
